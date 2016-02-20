@@ -1,5 +1,4 @@
-﻿
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Reactive.Linq;
@@ -9,8 +8,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Anotar.NLog;
-using CS.Network;
-using MsgPack;
+using CS;
+using CS.Reactive;
+using CS.Reactive.Network;
 using NearSight.Util;
 using RT.Util.ExtensionMethods;
 
@@ -19,15 +19,15 @@ namespace NearSight.Network
     public class ObservablePacketProtocol
     {
         public ITrackableObservable<MPack> Buffer { get; }
-        public NetClient Client { get; }
+        public MessageTransferClient<byte[]> Client { get; }
 
         //private Subject<MPack> _buffer;
 
-        public ObservablePacketProtocol(NetClient client)
+        public ObservablePacketProtocol(MessageTransferClient<byte[]> client)
         {
             this.Client = client;
-            Buffer = client.Observable
-                .Select(args => MPack.ParseFromBytes(args.Bytes))
+            Buffer = client.MessageRecieved
+                .Select(args => MPack.ParseFromBytes(args.Message))
                 .Do(LogRead)
                 .ToTrackableObservable();
 
@@ -68,13 +68,9 @@ namespace NearSight.Network
         }
         public Task WriteAsync(MPack packet)
         {
-            return WriteAsync(packet, CancellationToken.None);
-        }
-        public Task WriteAsync(MPack packet, CancellationToken token)
-        {
             LogWrite(packet);
             var bytes = packet.EncodeToBytes();
-            return Client.WriteAsync(bytes, token);
+            return Client.WriteAsync(bytes);
         }
 
         private void LogRead(MPack pack)

@@ -12,8 +12,8 @@ using System.Runtime.Remoting.Proxies;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using CS.Network;
-using MsgPack;
+using CS;
+using CS.Reactive.Network;
 using NearSight.Network;
 using NearSight.Protocol;
 using NearSight.Util;
@@ -92,7 +92,7 @@ namespace NearSight
             using (new AsyncContextChange())
             {
                 var tsk = Protocol.Buffer.Take(1).ToTask();
-                Protocol.Write(MPack.FromDouble(1.0));
+                Protocol.Write(MPack.From(1.0d));
                 if (!tsk.Wait(Options.OperationTimeout))
                     throw new TimeoutException(
                        "Did not recieve reply from the server in the specified operation timeout");
@@ -122,7 +122,7 @@ namespace NearSight
             _cancelSource?.Cancel();
             var t = Client;
             Client = null;
-            t.Close();
+            t.Dispose();
         }
         public override void Abort()
         {
@@ -140,11 +140,12 @@ namespace NearSight
                 Client.Dispose();
                 Client = null;
             }
+            _cancelSource = new CancellationTokenSource();
             Client = new NetClient(Endpoint.Host, Endpoint.Port);
             Protocol = new ObservablePacketProtocol(Client);
             await Client.ConnectAsync();
             //write client version number.
-            await Protocol.WriteAsync(MPack.FromDouble(1.0), token);
+            await Protocol.WriteAsync(MPack.From(1.0d));
             var respTxt = (await Protocol.Buffer.Take(1).ToTask(token)).Observe().To<string>();
             if (!respTxt.EqualsNoCase("OK"))
                 throw new InvalidOperationException(respTxt);
@@ -157,7 +158,7 @@ namespace NearSight
             Client = null;
             return Task.Factory.StartNew(() =>
             {
-                t.Close();
+                t.Dispose();
             }, token);
         }
 

@@ -11,8 +11,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Anotar.NLog;
-using CS.Network;
-using MsgPack;
+using CS;
+using CS.Reactive;
+using CS.Reactive.Network;
 using NearSight.Network;
 using NearSight.Util;
 using RT.Util;
@@ -23,7 +24,7 @@ namespace NearSight.Protocol
     internal class v1_0ServerContext : IServerContext
     {
         private readonly RemoterServer _parent;
-        private readonly NetClient _client;
+        private readonly MessageTransferClient<byte[]> _client;
         private readonly ObservablePacketProtocol _protocol;
         private readonly IDisposable _observable;
         private ListKvp<string, EventPropegator> _events;
@@ -125,6 +126,7 @@ namespace NearSight.Protocol
             if (clToken != null)
             {
                 session = _parent.Sessions.Get(clToken);
+                LogTo.Debug($"Session opened (existing). {_parent.Sessions.Count} in cache.");
                 if (session != null && _sessions.Contains(clToken))
                 {
                     result[CONST.HDR_STATUS] = MPack.From(CONST.STA_NORMAL);
@@ -140,9 +142,14 @@ namespace NearSight.Protocol
                 var policy = new CacheItemPolicy() { SlidingExpiration = _parent.SessionTimeout };
                 if (service is IDisposable)
                 {
-                    policy.RemovedCallback = args => ((IDisposable)args.CacheItem.Value).Dispose();
+                    policy.RemovedCallback = args =>
+                    {
+                        ((IDisposable)args.CacheItem.Value).Dispose();
+                        LogTo.Debug($"[{args.CacheItem.Key}] Session object timed out and destroyed");
+                    };
                 }
                 _parent.Sessions.Set(clToken, session, policy);
+                LogTo.Debug($"Session opened (new). {_parent.Sessions.Count} in cache.");
                 //_parent._sessions.Add(clToken, session);
             }
 
@@ -211,17 +218,8 @@ namespace NearSight.Protocol
                 // parse client input packet
                 var token = map[CONST.HDR_TOKEN].To<string>();
                 var sig = map[CONST.HDR_METHOD].To<string>();
-                var paramStart = sig.IndexOf('(');
-                var paramEnd = sig.IndexOf(')');
-                method = sig.Substring(0, paramStart);
-                var argTypes = sig.Substring(paramStart, paramEnd - paramStart)
-                    .TrimStart('(')
-                    .TrimEnd(')')
-                    .Split(';')
-                    .Select(t => Type.GetType(t.Trim()))
-                    .Where(t => t != null)
-                    .ToArray();
-                var returnType = Type.GetType(sig.Substring(paramEnd + 1).Trim());
+                var parsedSig = RemoteCallHelper.ParseMethodName(sig);
+                method = parsedSig.Name;
 
                 sesh = _parent.Sessions.Get(token);
                 if (sesh == null)
@@ -238,7 +236,7 @@ namespace NearSight.Protocol
                     .ToArray();
                 var serverRetType = methodInfo.ReturnType;
 
-                if (!Enumerable.SequenceEqual(argTypes, serverArgTypes) || serverRetType != returnType)
+                if (!RemoteCallHelper.CheckMethodSignature(methodInfo.Method, parsedSig))
                     throw new InvalidOperationException("Method signature does not match that of the server's implementation");
 
                 // check if user is authorized to execute this method
@@ -272,18 +270,8 @@ namespace NearSight.Protocol
                     else
                     {
                         if (byref)
-                        {
                             refParams.Add(i);
-                        }
-                        if (mpk.ValueType == MsgPackType.Map)
-                            reconArgs[i] = ClassifyMPack.Deserialize(type, mpk);
-                        else
-                        {
-                            if (type.IsByRef)
-                                type = type.GetElementType();
-                            //reconArgs[i] = ExactConvert.To(type, mpk.Value);
-                            reconArgs[i] = Convert.ChangeType(mpk.Value, type);
-                        }
+                        reconArgs[i] = RemoteCallHelper.ParamaterToObject(type, mpk);
                     }
                 }
 
@@ -299,19 +287,8 @@ namespace NearSight.Protocol
                 //var returnValue = methodInfo.Delegate(sesh.Instance, reconArgs);
                 var returnValue = methodInfo.Method.Invoke(sesh.Instance, reconArgs);
 
-                if (returnValue != null && !returnType.IsInstanceOfType(returnValue))
+                if (returnValue != null && !serverRetType.IsInstanceOfType(returnValue))
                     throw new InvalidOperationException("Return value type mismatch");
-
-                Func<Type, object, MPack> sanitizeParam = (type, o) =>
-                {
-                    if (type.IsByRef)
-                        type = type.GetElementType();
-                    var tcode = (int)Type.GetTypeCode(type);
-                    if (tcode > 2 || type == typeof(byte[]))
-                        return MPack.From(type, o);
-                    else
-                        return ClassifyMPack.Serialize(type, o);
-                };
 
                 // populate ref / out parameters to the response body
                 if (refParams.Any())
@@ -320,13 +297,13 @@ namespace NearSight.Protocol
                     for (int i = 0; i < refParams.Count; i++)
                     {
                         var paramIndex = refParams[i];
-                        refoutParams[paramIndex] = sanitizeParam(serverArgTypes[paramIndex], reconArgs[paramIndex]);
+                        refoutParams[paramIndex] = RemoteCallHelper.ObjectToParamater(reconArgs[paramIndex]);
                     }
                     result[CONST.HDR_ARGS] = refoutParams;
                 }
 
                 // set the return value of response body
-                if (typeof(Stream).IsAssignableFrom(returnType))
+                if (typeof(Stream).IsAssignableFrom(serverRetType))
                 {
                     bool writable = methodInfo.Method.ReturnParameter.GetCustomAttributes(typeof(RWritable)).Any();
                     string tkn = Guid.NewGuid().ToString();
@@ -336,16 +313,16 @@ namespace NearSight.Protocol
                     result[CONST.HDR_STATUS] = MPack.From(CONST.STA_STREAM);
                     result[CONST.HDR_VALUE] = MPack.From(tkn);
                 }
-                else if (returnType == typeof(void))
+                else if (serverRetType == typeof(void))
                 {
                     result[CONST.HDR_STATUS] = MPack.From(CONST.STA_VOID);
                 }
-                else if (Attribute.IsDefined(returnType ?? typeof(object), typeof(RContractProvider)))
+                else if (Attribute.IsDefined(serverRetType ?? typeof(object), typeof(RContractProvider)))
                 {
                     result[CONST.HDR_STATUS] = MPack.From(CONST.STA_SERVICE);
-                    REndpoint endpoint = _parent.Endpoints.SingleOrDefault(ed => ed.Interface == returnType);
+                    REndpoint endpoint = _parent.Endpoints.SingleOrDefault(ed => ed.Interface == serverRetType);
                     if (endpoint == null)
-                        endpoint = new REndpoint(RandomEx.GetString(20), returnType, context => null);
+                        endpoint = new REndpoint(RandomEx.GetString(20), serverRetType, context => null);
                     // create new session
                     var ses = new RSession(endpoint, returnValue);
                     var policy = new CacheItemPolicy() { SlidingExpiration = _parent.SessionTimeout };
@@ -359,7 +336,7 @@ namespace NearSight.Protocol
                 else
                 {
                     result[CONST.HDR_STATUS] = MPack.From(CONST.STA_NORMAL);
-                    result[CONST.HDR_VALUE] = sanitizeParam(returnType, returnValue);
+                    result[CONST.HDR_VALUE] = RemoteCallHelper.ObjectToParamater(returnValue);
                 }
             }
             catch (Exception ex)
@@ -383,7 +360,7 @@ namespace NearSight.Protocol
             }
             DateTime end = DateTime.Now;
             var time = end - start;
-            result[CONST.HDR_TIME] = MPack.FromDouble(time.TotalMilliseconds);
+            result[CONST.HDR_TIME] = MPack.From(time.TotalMilliseconds);
             return result;
         }
 
@@ -426,6 +403,7 @@ namespace NearSight.Protocol
                     _events.Remove(kvp);
                 });
             }
+            LogTo.Debug($"Session closed. {_parent.Sessions.Count} in cache.");
         }
         public void Dispose()
         {
@@ -438,7 +416,7 @@ namespace NearSight.Protocol
                     pair.Value.Dispose();
                 }
                 _events.Clear();
-                _client.Close();
+                _client.Dispose();
             }
             catch when (!_parent.PropagateExceptions)
             {

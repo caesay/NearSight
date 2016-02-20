@@ -8,8 +8,9 @@ using System.Reactive.Threading.Tasks;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using CS;
+using CS.Reactive;
 using LZ4;
-using MsgPack;
 using NearSight.Util;
 using RT.Util;
 using RT.Util.ExtensionMethods;
@@ -62,11 +63,11 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(Seek))},
+                {CONST.HDR_METHOD, MPack.From(nameof(Seek))},
                 {CONST.HDR_ARGS, new MPackArray
                     {
-                        MPack.FromInteger(offset),
-                        MPack.FromInteger((int)origin),
+                        MPack.From(offset),
+                        MPack.From((int)origin),
                     }
                 },
             };
@@ -76,10 +77,10 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(SetLength))},
+                {CONST.HDR_METHOD, MPack.From(nameof(SetLength))},
                 {CONST.HDR_ARGS, new MPackArray
                     {
-                        MPack.FromInteger(value),
+                        MPack.From(value),
                     }
                 },
             };
@@ -107,11 +108,11 @@ namespace NearSight.Network
             base.Dispose(disposing);
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(Dispose))},
+                {CONST.HDR_METHOD, MPack.From(nameof(Dispose))},
                 {
                     CONST.HDR_ARGS, new MPackArray
                     {
-                        MPack.FromBool(disposing),
+                        MPack.From(disposing),
                     }
                 },
             };
@@ -149,7 +150,7 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(Flush))},
+                {CONST.HDR_METHOD, MPack.From(nameof(Flush))},
             };
             return p2;
         }
@@ -157,10 +158,10 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(Read))},
+                {CONST.HDR_METHOD, MPack.From(nameof(Read))},
                 {CONST.HDR_ARGS, new MPackArray
                     {
-                        MPack.FromInteger(count),
+                        MPack.From(count),
                     }
                 },
             };
@@ -173,10 +174,10 @@ namespace NearSight.Network
 
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString(nameof(Write))},
+                {CONST.HDR_METHOD, MPack.From(nameof(Write))},
                 {CONST.HDR_ARGS, new MPackArray
                     {
-                        MPack.FromBytes(LZ4Wrap.EncodeWrapped(tmp, true)),
+                        MPack.From(LZ4Wrap.EncodeWrapped(tmp, true)),
                     }
                 },
             };
@@ -187,7 +188,7 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString("GET_PROPERTY")},
+                {CONST.HDR_METHOD, MPack.From("GET_PROPERTY")},
                 {
                     CONST.HDR_ARGS, new MPackArray
                     {
@@ -202,7 +203,7 @@ namespace NearSight.Network
         {
             MPackMap p2 = new MPackMap
             {
-                {CONST.HDR_METHOD, MPack.FromString("SET_PROPERTY")},
+                {CONST.HDR_METHOD, MPack.From("SET_PROPERTY")},
                 {
                     CONST.HDR_ARGS, new MPackArray
                     {
@@ -255,9 +256,9 @@ namespace NearSight.Network
         {
             var m = request;
             int id = MsgId.Get();
-            m[CONST.HDR_ID] = MPack.FromInteger(id);
-            m[CONST.HDR_CMD] = MPack.FromString(CONST.CMD_STREAM);
-            m[CONST.HDR_TOKEN] = MPack.FromString(_token);
+            m[CONST.HDR_ID] = MPack.From(id);
+            m[CONST.HDR_CMD] = MPack.From(CONST.CMD_STREAM);
+            m[CONST.HDR_TOKEN] = MPack.From(_token);
 
             using (new AsyncContextChange(null))
             {
@@ -275,9 +276,9 @@ namespace NearSight.Network
         {
             var m = request;
             int id = MsgId.Get();
-            m[CONST.HDR_ID] = MPack.FromInteger(id);
-            m[CONST.HDR_CMD] = MPack.FromString(CONST.CMD_STREAM);
-            m[CONST.HDR_TOKEN] = MPack.FromString(_token);
+            m[CONST.HDR_ID] = MPack.From(id);
+            m[CONST.HDR_CMD] = MPack.From(CONST.CMD_STREAM);
+            m[CONST.HDR_TOKEN] = MPack.From(_token);
 
             using (CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, _cancel))
             {
@@ -342,7 +343,7 @@ namespace NearSight.Network
                             && p.Value[CONST.HDR_CMD].To<string>().EqualsNoCase(CONST.CMD_STREAM)
                             && p.Value[CONST.HDR_TOKEN].To<string>().EqualsNoCase(_token))
                 .Observe()
-                .ObserveOn(TaskPoolScheduler.Default)
+                .ObserveOn(Scheduler.Default)
                 .Subscribe(OnNext, OnCompleted);
         }
 
@@ -400,7 +401,7 @@ namespace NearSight.Network
                             break;
                         }
                         var getProp = _stream.GetType().GetProperties().Single(x => x.Name.EqualsNoCase(getName));
-                        resp[CONST.HDR_VALUE] = MPack.From(getProp.PropertyType, getProp.GetValue(_stream));
+                        resp[CONST.HDR_VALUE] = MPack.From(getProp.GetValue(_stream));
                         break;
                     case "SET_PROPERTY":
                         var setName = p[CONST.HDR_ARGS][0].To<string>();

@@ -39,17 +39,21 @@
       <HintPath>..\packages\Anotar.NLog.Fody.2.20.0\lib\Anotar.NLog.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <Reference Include="CS.Network, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\lib\CS.Network.dll</HintPath>
+    <Reference Include="CS.Reactive, Version=1.0.6.21, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\CS.Reactive.1.0.6.21\lib\net451\CS.Reactive.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="MPack, Version=1.1.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\MPack.1.1.0.0\lib\net45\MPack.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="NLog, Version=4.0.0.0, Culture=neutral, PublicKeyToken=5120e14c03d0593c, processorArchitecture=MSIL">
       <HintPath>..\packages\NLog.4.2.3\lib\net45\NLog.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="RT.Util, Version=1.0.9999.9999, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\lib\RT.Util.dll</HintPath>
+    <Reference Include="RT.Util, Version=1.0.1516.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\RT.Util.1.0.1516.0\lib\net40-Client\RT.Util.dll</HintPath>
+      <Private>True</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -65,10 +69,6 @@
       <HintPath>..\packages\Rx-Linq.2.2.5\lib\net45\System.Reactive.Linq.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="System.Reactive.PlatformServices, Version=2.2.5.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\packages\Rx-PlatformServices.2.2.5\lib\net45\System.Reactive.PlatformServices.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="System.Runtime.Caching" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -79,7 +79,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Attributes.cs" />
+    <None Include="NearSight.nuspec" />
     <Compile Include="Constants.cs" />
+    <Compile Include="Network\MPackTransferProtocol.cs" />
+    <Compile Include="RemoteCallHelper.cs" />
     <Compile Include="Network\CommunicationObject.cs" />
     <Compile Include="Network\ObservablePacketProtocol.cs" />
     <Compile Include="Protocol\IServerContext.cs" />
@@ -102,7 +105,6 @@
     <Compile Include="RemoterFactory.cs" />
     <Compile Include="Util\DynamicTypeFactory.cs" />
     <Compile Include="Util\IAsyncDisposable.cs" />
-    <Compile Include="Util\MPack.cs" />
     <Compile Include="Util\MPackReader.cs" />
     <Compile Include="Util\ClassifyMPack.cs" />
     <Compile Include="Util\EventPropegator.cs" />
@@ -116,7 +118,6 @@
     <Compile Include="Util\MsgId.cs" />
     <Compile Include="Util\RandomEx.cs" />
     <Compile Include="Util\TrackedObject.cs" />
-    <Compile Include="Util\TrackableObservable.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

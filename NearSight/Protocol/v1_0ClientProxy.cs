@@ -10,7 +10,8 @@ using System.Runtime.Remoting.Proxies;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using MsgPack;
+using CS;
+using CS.Reactive;
 using NearSight.Network;
 using NearSight.Util;
 using RT.Util;
@@ -103,7 +104,7 @@ namespace NearSight.Protocol
                 }).Timeout(_factory.Options.RecieveTimeout).Take(1).Observe()
             .Select(m => (MPackMap)m).ToTask(cancelToken);
 
-            await _factory.Protocol.WriteAsync(req, cancelToken).ConfigureAwait(false);
+            await _factory.Protocol.WriteAsync(req).ConfigureAwait(false);
             var resp = await task.ConfigureAwait(false);
             var token = (string)await ParseResponseToObjectOrThrow(typeof(string), resp).ConfigureAwait(false);
             _token = token;
@@ -160,7 +161,7 @@ namespace NearSight.Protocol
             }).Timeout(_factory.Options.RecieveTimeout).Take(1).Observe()
             .Select(m => (MPackMap)m).ToTask(token);
 
-            await _factory.Protocol.WriteAsync(req, token).ConfigureAwait(false);
+            await _factory.Protocol.WriteAsync(req).ConfigureAwait(false);
             var resp = await task.ConfigureAwait(false);
             _token = null;
             SetState(CommunicationState.Closed);
@@ -229,10 +230,12 @@ namespace NearSight.Protocol
             }
 
             // if invocation is for an interface that is implemented by this RealProxy
-            if (m.DeclaringType.IsGenericType
-                && m.DeclaringType.GetGenericTypeDefinition() == (typeof(IExtendedProxy<>))
-                && CheckObjectContainsMethod(m, _extendedProxy))
-                return InvokeLocal(_extendedProxy, mcm);
+            if (m.DeclaringType.IsGenericType && m.DeclaringType.GetGenericTypeDefinition() == (typeof(IExtendedProxy<>))
+                || m.DeclaringType == typeof(IDisposable))
+            {
+                if (CheckObjectContainsMethod(m, _extendedProxy))
+                    return InvokeLocal(_extendedProxy, mcm);
+            }
 
             if (CheckObjectContainsMethod(m, this))
                 return InvokeLocal(this, mcm);
@@ -284,7 +287,7 @@ namespace NearSight.Protocol
                         var type = method.GetParameters()[i].ParameterType;
                         if (type.IsByRef)
                             type = type.GetElementType();
-                        if (mpk.ValueType == MsgPackType.Map)
+                        if (mpk.ValueType == MPackType.Map)
                             reconArgs[i] = ClassifyMPack.Deserialize(type, mpk);
                         else
                         {
@@ -318,7 +321,7 @@ namespace NearSight.Protocol
         #endregion
 
         #region Remoting Methods
-        protected async Task<MPackMap> ExecuteRemoteCall(MethodInfo method, object[] paramaters)
+        private async Task<MPackMap> ExecuteRemoteCall(MethodInfo method, object[] paramaters)
         {
             var id = MsgId.Get();
             MPackMap req = new MPackMap();
@@ -326,9 +329,9 @@ namespace NearSight.Protocol
             req[CONST.HDR_ID] = MPack.From(id);
             req[CONST.HDR_TOKEN] = MPack.From(_token);
             req[CONST.HDR_LOCATION] = MPack.From(_path);
-            req[CONST.HDR_METHOD] = MPack.From(CreateMethodName(method));
-            req[CONST.HDR_ARGS] = new MPackArray(paramaters.Select(p =>
-                p != null ? SanitizeParam(p.GetType(), p) : MPack.Null()));
+            req[CONST.HDR_METHOD] = MPack.From(RemoteCallHelper.GetMethodName(method));
+            var param = paramaters.Select(p => p != null ? RemoteCallHelper.ObjectToParamater(p) : MPack.Null()).ToArray();
+            req[CONST.HDR_ARGS] = new MPackArray(param);
             var resp = _factory.Protocol.Buffer.Where(m =>
             {
                 var map = m.Value as MPackMap;
@@ -341,25 +344,15 @@ namespace NearSight.Protocol
             await _factory.Protocol.WriteAsync(req);
             return await resp;
         }
-        private MPack SanitizeParam(Type type, object o)
-        {
-            var tcode = (int)Type.GetTypeCode(type);
-            if (tcode > 2)
-                return MPack.From(type, o);
-            else
-                return ClassifyMPack.Serialize(type, o);
-        }
-        protected async Task<object> ParseResponseToObjectOrThrow(Type returnType, MPackMap map)
+        private async Task<object> ParseResponseToObjectOrThrow(Type returnType, MPackMap map)
         {
             switch (map[CONST.HDR_STATUS].To<string>())
             {
                 case CONST.STA_VOID:
                     return null;
                 case CONST.STA_NORMAL:
-                    var value = map[CONST.HDR_VALUE];
-                    if (value.ValueType == MsgPackType.Map)
-                        return ClassifyMPack.Deserialize(returnType, value);
-                    return ExactConvert.To(returnType, value.Value);
+                    MPack value = map[CONST.HDR_VALUE];
+                    return RemoteCallHelper.ParamaterToObject(returnType, value);
                 case CONST.STA_SERVICE:
                     string tok = map[CONST.HDR_VALUE].To<string>();
                     var prox = v1_0ClientProxy.FromToken(_factory, returnType, tok);
@@ -367,14 +360,14 @@ namespace NearSight.Protocol
                     return prox.GetTransparentProxy();
                 case CONST.STA_STREAM:
                     return new MessageConsumerStream(map[CONST.HDR_VALUE].To<string>(), _factory.Protocol.Buffer,
-                    _factory.CancelToken, (pack, token) => _factory.Protocol.WriteAsync(pack, token));
+                    _factory.CancelToken, (pack, token) => _factory.Protocol.WriteAsync(pack));
                 case CONST.STA_ERROR:
                     throw new Exception(map[CONST.HDR_VALUE].To<string>());
                 default:
                     throw new NotSupportedException("Server has returned an unsupported type");
             }
         }
-        protected async Task<RemoteResult> ParseResponse(MethodInfo method, MPackMap map)
+        private async Task<RemoteResult> ParseResponse(MethodInfo method, MPackMap map)
         {
             var remote = new RemoteResult();
             try
@@ -392,12 +385,7 @@ namespace NearSight.Protocol
                         var type = method.GetParameters()[i].ParameterType;
                         if (type.IsByRef)
                             type = type.GetElementType();
-                        if (mpk.ValueType == MsgPackType.Map)
-                            reconArgs[i] = ClassifyMPack.Deserialize(type, mpk);
-                        else
-                        {
-                            reconArgs[i] = Convert.ChangeType(mpk.Value, type);
-                        }
+                        reconArgs[i] = RemoteCallHelper.ParamaterToObject(type, mpk);
                     }
                     remote.RefParams = reconArgs;
                 }
@@ -410,7 +398,7 @@ namespace NearSight.Protocol
             }
             return remote;
         }
-        protected async Task<RemoteResult<Y>> ParseResponse<Y>(MethodInfo method, MPackMap map)
+        private async Task<RemoteResult<Y>> ParseResponse<Y>(MethodInfo method, MPackMap map)
         {
             var remote = new RemoteResult<Y>();
             try
@@ -429,12 +417,7 @@ namespace NearSight.Protocol
                         var type = method.GetParameters()[i].ParameterType;
                         if (type.IsByRef)
                             type = type.GetElementType();
-                        if (mpk.ValueType == MsgPackType.Map)
-                            reconArgs[i] = ClassifyMPack.Deserialize(type, mpk);
-                        else
-                        {
-                            reconArgs[i] = Convert.ChangeType(mpk.Value, type);
-                        }
+                        reconArgs[i] = RemoteCallHelper.ParamaterToObject(type, mpk);
                     }
                     remote.RefParams = reconArgs;
                 }
@@ -447,38 +430,7 @@ namespace NearSight.Protocol
             }
             return remote;
         }
-        private string CreateMethodName(MethodInfo m)
-        {
-            return "{0}({1}) {2}".Fmt(
-                m.Name,
-                m.GetParameters().Select(p => GetTypeString(p.ParameterType)).JoinString("; "),
-                GetTypeString(m.ReturnType));
-        }
 
-        private string GetTypeString(Type t)
-        {
-            if (IsSimpleType(t) || t.Module.ScopeName == "CommonLanguageRuntimeLibrary")
-                return t.FullName;
-
-            return t.AssemblyQualifiedName;
-        }
-        public static bool IsSimpleType(Type type)
-        {
-            return
-                type.IsPrimitive ||
-                new Type[] {
-            typeof(Enum),
-            typeof(String),
-            typeof(Decimal),
-            typeof(DateTime),
-            typeof(DateTimeOffset),
-            typeof(TimeSpan),
-            typeof(Guid)
-                }.Contains(type) ||
-                Convert.GetTypeCode(type) != TypeCode.Object ||
-                (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) && IsSimpleType(type.GetGenericArguments()[0]))
-                ;
-        }
         #endregion
 
         #region RealProxy

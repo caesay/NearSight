@@ -33,6 +33,7 @@ namespace NearSight.Playful
 
             IRemoterValueTest valueTest = proxy.GetInterface("You got it back.");
             var valTestRes = valueTest.Get();
+            (valueTest as IExtendedProxy<IRemoterValueTest>).Dispose();
 
             Stream streamTest = proxy.GetRandomStream(100);
             streamTest.ReadByte();
@@ -47,7 +48,14 @@ namespace NearSight.Playful
             catch { }
 
             server.Stop();
-            long streamPos2 = streamTest.Position;
+            try
+            {
+                long streamPos2 = streamTest.Position;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+            }
             Console.Read();
         }
     }

@@ -1,0 +1,15 @@
+﻿<?xml version="1.0"?>
+<package>
+  <metadata>
+    <id>NearSight</id>
+    <version>$version$</version>
+    <title>NearSight</title>
+    <authors>caesay</authors>
+    <owners>caesay</owners>
+    <projectUrl>https://github.com/caesay/NearSight</projectUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>A fresh take on RPC. Check out the project URL for examples.</description>
+    <copyright>Copyright 2015 Caelan Sayler</copyright>
+    <tags>C# Remoting RPC</tags>
+  </metadata>
+</package>

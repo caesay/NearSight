@@ -124,6 +124,10 @@ namespace NearSight.Util
             _lock.EnterWriteLock();
             try
             {
+                // iterate to trigger remove callbacks
+                foreach (var item in _internal.ToArray())
+                    _internal.Remove(item.Key);
+
                 _internal.Dispose();
                 _internal = new MemoryCache(typeof(TValue).Name + "_" + Guid.NewGuid());
             }

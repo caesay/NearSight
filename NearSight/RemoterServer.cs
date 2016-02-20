@@ -23,8 +23,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Anotar.NLog;
-using CS.Network;
-using MsgPack;
+using CS;
+using CS.Reactive;
+using CS.Reactive.Network;
 using NearSight.Network;
 using NearSight.Protocol;
 using NearSight.Util;
@@ -59,10 +60,10 @@ namespace NearSight
 
         private bool _ssl;
         private NetServer _server;
-        private readonly Dictionary<NetClient, IServerContext> _connections;
+        private readonly Dictionary<MessageTransferClient<byte[]>, IServerContext> _connections;
         private readonly List<REndpoint> _endpoints;
-        private Task _acceptLoop;
-        private CancellationTokenSource _cancelSource;
+        //private Task _acceptLoop;
+        //private CancellationTokenSource _cancelSource;
         private readonly object _lock = new object();
 
         public RemoterServer(int port)
@@ -73,7 +74,7 @@ namespace NearSight
         {
             LocalEndpoint = localEp;
             Port = port;
-            _connections = new Dictionary<NetClient, IServerContext>();
+            _connections = new Dictionary<MessageTransferClient<byte[]>, IServerContext>();
             _endpoints = new List<REndpoint>();
         }
 
@@ -84,11 +85,10 @@ namespace NearSight
                 try
                 {
                     // Define the socket, bind to the port, and start accepting connections
-                    _cancelSource = new CancellationTokenSource();
                     _server = new NetServer(LocalEndpoint, Port);
                     _server.Start();
                     Listening = true;
-                    _acceptLoop = Server_ListenForClientLoop(_server, _cancelSource.Token);
+                    _server.ClientConnected.Subscribe(Server_AcceptClient);
                     LogTo.Info("[Remoter] Listening on port " + Port);
                 }
                 catch (Exception ex)
@@ -107,20 +107,16 @@ namespace NearSight
             {
                 using (new AsyncContextChange())
                 {
-
                     Listening = false;
-                    _cancelSource.Cancel();
-
-                    if (_acceptLoop != null && !_acceptLoop.IsCompleted)
-                        _acceptLoop.Wait(2000);
 
                     // Close all child sockets
-                    foreach (var socket in _connections)
+                    foreach (var socket in _connections.ToArray())
                     {
                         socket.Value.Dispose();
-                        socket.Key.Close();
+                        socket.Key.Dispose();
                     }
                     _connections.Clear();
+                    Sessions.Clear();
 
                     // Close the listening socket
                     _server.Stop();
@@ -170,36 +166,15 @@ namespace NearSight
             }
         }
 
-        private async Task Server_ListenForClientLoop(NetServer server, CancellationToken token)
+        private async void Server_AcceptClient(ITracked<MessageTransferClient<byte[]>> callback)
         {
-            while (!token.IsCancellationRequested)
-            {
-                var task = server.AcceptClientAsync();
-                try
-                {
-                    var client = await task.WithWaitCancellation(token);
-                    Server_AcceptClient(client);
-                }
-                catch (AggregateException)
-                {
-                    // Async exceptions are wrapped in an AggregateException
-                }
-                catch (OperationCanceledException)
-                {
-                    //task was inturupted by a cancellation token.
-                }
-            }
-        }
-        private async void Server_AcceptClient(AcceptClientCallback callback)
-        {
-            var client = callback.Client;
+            var client = callback.Value;
             try
             {
                 ObservablePacketProtocol protocol = new ObservablePacketProtocol(client);
                 var init = protocol.Buffer.Take(1).ToTask();
-                callback.Accept();
+                callback.Observe();
                 var hs = (await init).Observe().To<double>();
-
 
                 var supported = new Dictionary<double, Func<IServerContext>>()
                 {
@@ -208,12 +183,12 @@ namespace NearSight
                 if (supported.ContainsKey(hs))
                 {
                     var impl = supported[hs]();
-                    await client.WriteAsync(MPack.FromString("OK").EncodeToBytes()).ConfigureAwait(false);
+                    await client.WriteAsync(MPack.From("OK").EncodeToBytes()).ConfigureAwait(false);
                     _connections.Add(client, impl);
                 }
                 else
                 {
-                    await client.WriteAsync(MPack.FromString("Unsupported version").EncodeToBytes()).ConfigureAwait(false);
+                    await client.WriteAsync(MPack.From("Unsupported version").EncodeToBytes()).ConfigureAwait(false);
                     throw new Exception("Unsupported client version");
                 }
 
@@ -243,16 +218,22 @@ namespace NearSight
             }
         }
 
-        private void Client_Dispose(NetClient childSocket)
+        private void Client_Dispose(MessageTransferClient<byte[]> childSocket)
         {
             if (childSocket == null)
                 return;
-            childSocket.Close();
-            if (_connections.ContainsKey(childSocket))
+            try
             {
-                var impl = _connections[childSocket];
-                impl.Dispose();
-                _connections.Remove(childSocket);
+                childSocket.Dispose();
+                if (_connections.ContainsKey(childSocket))
+                {
+                    var impl = _connections[childSocket];
+                    impl.Dispose();
+                    _connections.Remove(childSocket);
+                }
+            }
+            catch
+            {
             }
         }
     }

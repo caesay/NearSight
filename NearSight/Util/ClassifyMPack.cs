@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using MsgPack;
+using CS;
 using RT.Util;
 using RT.Util.ExtensionMethods;
 using RT.Util.Json;
@@ -94,7 +94,7 @@ namespace NearSight.Util
 
         bool IClassifyFormat<MPack>.IsNull(MPack element)
         {
-            return element == null || element.ValueType == MsgPackType.Null;
+            return element == null || element.ValueType == MPackType.Null;
         }
 
         object IClassifyFormat<MPack>.GetSimpleValue(MPack element)
@@ -163,7 +163,7 @@ namespace NearSight.Util
                 && dict.ContainsKey(fieldName)
                 && (!(dict[fieldName] is MPackMap)
                     || !((MPackMap)dict[fieldName]).ContainsKey(META_DECLARING_TYPES)
-                    || ((MPackArray)((MPackMap)dict[fieldName])[META_DECLARING_TYPES]).Contains(MPack.FromString(declaringType)));
+                    || ((MPackArray)((MPackMap)dict[fieldName])[META_DECLARING_TYPES]).Contains(MPack.From(declaringType)));
         }
 
         MPack IClassifyFormat<MPack>.GetField(MPack element, string fieldName, string declaringType)
@@ -176,7 +176,7 @@ namespace NearSight.Util
             {
                 var values = (MPackArray)considerDict[META_VALUE_S];
                 var types = (MPackArray)considerDict[META_DECLARING_TYPES];
-                var index = types.IndexOf(MPack.FromString(declaringType));
+                var index = types.IndexOf(MPack.From(declaringType));
                 return values[index];
             }
             return consider;
@@ -242,37 +242,12 @@ namespace NearSight.Util
         MPack IClassifyFormat<MPack>.FormatSimpleValue(object value)
         {
             if (value == null)
-                return null;
+                return MPack.Null();
 
-            if (value is double)
-                return MPack.FromDouble((double)value);
-            if (value is float)
-                return MPack.FromSingle((float)value);
-            if (value is byte)
-                return MPack.FromInteger((byte)value);
-            if (value is sbyte)
-                return MPack.FromInteger((sbyte)value);
-            if (value is short)
-                return MPack.FromInteger((short)value);
-            if (value is ushort)
-                return MPack.FromInteger((ushort)value);
-            if (value is int)
-                return MPack.FromInteger((int)value);
-            if (value is uint)
-                return MPack.FromInteger((uint)value);
-            if (value is long)
-                return MPack.FromInteger((long)value);
-            if (value is ulong)
-                return MPack.FromInteger((ulong)value);
-            if (value is decimal)
-                return MPack.FromDouble((double)(decimal)value);
-            if (value is bool)
-                return MPack.FromBool((bool)value);
-            if (value is string)
-                return MPack.FromString((string)value);
+            if(value is Enum)
+                return MPack.From(ExactConvert.ToString(value));
 
-            // This takes care of enum types
-            return MPack.FromString(ExactConvert.ToString(value));
+            return MPack.From(value);
         }
 
         MPack IClassifyFormat<MPack>.FormatSelfValue(MPack value)
@@ -306,7 +281,7 @@ namespace NearSight.Util
                         let value = gr.Skip(1).Any()
                             ? new MPackMap()
                                 {
-                                   { META_DECLARING_TYPES, new MPackArray(gr.Select(elem => MPack.FromString(elem.DeclaringType))) },
+                                   { META_DECLARING_TYPES, new MPackArray(gr.Select(elem => MPack.From(elem.DeclaringType))) },
                                    { META_VALUE_S, new MPackArray(gr.Select(elem => elem.Value)) }
                                 }
                             : gr.First().Value
@@ -322,15 +297,15 @@ namespace NearSight.Util
 
         MPack IClassifyFormat<MPack>.FormatReference(int refId)
         {
-            return new MPackMap() { { META_REF, MPack.FromInteger(refId) } };
+            return new MPackMap() { { META_REF, MPack.From(refId) } };
         }
 
         MPack IClassifyFormat<MPack>.FormatReferable(MPack element, int refId)
         {
             if (!(element is MPackMap))
-                return new MPackMap() { { META_REF_ID, MPack.FromInteger(refId) }, { META_VALUE, element } };
+                return new MPackMap() { { META_REF_ID, MPack.From(refId) }, { META_VALUE, element } };
 
-            ((MPackMap)element)[META_REF_ID] = MPack.FromInteger(refId);
+            ((MPackMap)element)[META_REF_ID] = MPack.From(refId);
             return element;
         }
 
@@ -338,11 +313,11 @@ namespace NearSight.Util
         {
             if (!(element is MPackMap))
                 return new MPackMap {
-                    { isFullType ? META_FULLTYPE : META_TYPE, MPack.FromString(type) },
+                    { isFullType ? META_FULLTYPE : META_TYPE, MPack.From(type) },
                     { META_VALUE, element }
                 };
 
-            ((MPackMap)element)[isFullType ? META_FULLTYPE : META_TYPE] = MPack.FromString(type);
+            ((MPackMap)element)[isFullType ? META_FULLTYPE : META_TYPE] = MPack.From(type);
             return element;
         }
 
